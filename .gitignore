@@ -1,2 +1,18 @@
+# Environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+
+# Secrets — never commit these
 .env
-.commandcode/*
+.env.*
+!.env.example
+credentials/
+*.enc
+
+# Tooling
+.commandcode/

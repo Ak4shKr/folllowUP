@@ -1,0 +1,18 @@
+minimum_pre_commit_version: "3.7.0"
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.3
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (app)
+        entry: uv run mypy app
+        language: system
+        pass_filenames: false
+        files: ^app/

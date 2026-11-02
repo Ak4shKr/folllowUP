@@ -1,0 +1,43 @@
+line-length = 100
+target-version = "py312"
+indent-width = 4
+
+exclude = [
+    ".venv",
+    ".git",
+    "__pycache__",
+    "migrations/versions",
+]
+
+[lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # import sorting
+    "UP",    # pyupgrade
+    "B",     # bugbear
+    "SIM",   # simplify
+    "ASYNC", # async correctness
+    "C4",    # comprehensions
+    "PIE",   # misc lints
+    "RUF",   # ruff-specific
+    "S",     # bandit security
+]
+ignore = [
+    "E501",  # line length is the formatter's job
+]
+
+[lint.isort]
+known-first-party = ["app"]
+
+[lint.per-file-ignores]
+"tests/**" = ["S101"]          # asserts are how tests work
+"migrations/**" = ["E501", "I001"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = true
+skip-magic-trailing-comma = false

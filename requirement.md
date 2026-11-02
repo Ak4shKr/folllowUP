@@ -2,7 +2,7 @@
 
 **Status:** v2 specification (replaceable until Phase 0 code lands)
 **Owner:** single developer, single user
-**Companion docs:** [`AGENTS.md`](AGENTS.md) (engineering standards) · [`docs/folder-structure.md`](docs/folder-structure.md) (layout)
+**Companion docs:** [`AGENTS.md`](AGENTS.md) (engineering standards, structure, current status)
 
 ---
 

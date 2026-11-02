@@ -52,7 +52,11 @@ email is worse than a boring one that sends exactly what was approved. Optimize 
     microservices, frontend, or cloud queue. Add a decision entry to `requirement.md` §12 first.
 18. **Failing tests block completion.** Never hand back code with a red suite or a type error.
 19. **Small, reviewable changes.** One phase at a time; no scaffolding for later phases.
-20. **Document behavior changes** in `requirement.md`, `.env.example`, and README in the same change.
+20. **Document behavior changes** in `requirement.md` and `.env.example` in the same change.
+    Structure, stack, or plan changes update this file. `README.md` is a fixed overview
+    (product, install, stack) and is not updated per change.
+21. **This file is the single source of truth for agents and new developers.** If reality and this
+    file disagree, the change is incomplete. Update the doc and the code together.
 
 ---
 
@@ -101,10 +105,92 @@ Forbidden, always:
 | `ai/` | Prompt versions, model construction, generation, output validation | Sending, DB access |
 | `scheduler/` | Job registration, advisory lock, tick intervals | Business rules |
 
-### 3.3 Layout
+### 3.3 Layout (as created in Phase 0)
 
-See [`docs/folder-structure.md`](docs/folder-structure.md) for the canonical tree and the purpose of
-every file. Create directories only when their phase starts.
+```text
+app/
+├── main.py                  # app factory + lifespan (DB engine, scheduler, routers)
+├── dev.py                   # `uv run dev` / `uv run start` (host + port come from env)
+├── api/
+│   ├── openapi.py           # swagger metadata: title, tags, X-API-Key scheme
+│   ├── health.py            # GET /health — unversioned, unauthenticated
+│   ├── dependencies.py      # session, auth, pagination dependencies
+│   └── v1/
+│       ├── router.py        # aggregates route modules under /api/v1
+│       └── routes/          # contacts.py, campaigns.py, emails.py, ...
+├── core/
+│   ├── env.py               # Env(BaseSettings) — only reader of .env / os.environ
+│   ├── config.py            # derived frozen config: settings, database
+│   ├── logging.py           # structlog config + redaction processor
+│   ├── errors.py            # AppError hierarchy + HTTP mapping
+│   ├── security.py          # API-key dependency, Fernet helpers
+│   └── time.py              # UTC/window helpers
+├── shared/                  # enums.py, constants.py, types.py, protocols.py
+├── utils/                   # pure helpers: email.py, text.py, pagination.py
+├── schemas/                 # Pydantic request/response/AI contracts
+├── db/
+│   ├── session.py           # async engine + sessionmaker
+│   └── models/              # base.py, contact.py, campaign.py, ...
+├── repositories/            # all SQL and persistence
+├── services/                # all business rules
+├── integrations/            # gmail.py, google_sheets.py, google_auth.py
+├── ai/                      # model_factory.py, generator.py, prompts/
+├── scheduler/               # scheduler.py, jobs/
+└── cli/                     # operator commands (review, pause, stats)
+tests/{unit,integration,e2e}/
+scripts/                     # thin wrappers over services
+migrations/                  # Alembic
+```
+
+This tree is the single source of truth for structure; there is no separate folder-structure doc.
+Root files: `pyproject.toml` (uv project + `dev`/`start` entry points), `uv.lock`, `ruff.toml`,
+`.pre-commit-config.yaml`, `.editorconfig`, `.env.example`, `alembic.ini`, `migrations/`.
+
+**There is no `controllers/` and no `apis/` directory.** In FastAPI the route handler is the
+controller; duplicating the layer produces two places to change and no benefit.
+
+### 3.4 Coming from Node/TypeScript
+
+| flwUp | Node/TypeScript equivalent |
+| --- | --- |
+| `uv` + `uv.lock` | `pnpm` + `pnpm-lock.yaml` |
+| `pyproject.toml` | `package.json` + `tsconfig.json` + tool config |
+| FastAPI | Express / NestJS |
+| `api/v1/routes/*.py` | NestJS controller files / Express router modules |
+| `api/dependencies.py` + `Depends()` | middleware + request-scoped DI providers |
+| `schemas/` (Pydantic) | Zod schemas / class-validator DTOs |
+| `core/config.py` (pydantic-settings) | `dotenv` + `envalid`/`zod` env parsing |
+| `db/models/` (SQLAlchemy 2.0) | `prisma/schema.prisma` models |
+| `migrations/` (Alembic) | Prisma Migrate / Knex migrations |
+| `repositories/` | repository layer over Prisma Client |
+| `services/` | NestJS providers |
+| `integrations/` | typed `axios` clients behind an interface |
+| `ai/` | a `lib/openai` module |
+| `scheduler/` | `node-cron`, except the work queue lives in Postgres, not memory |
+| `core/logging.py` (structlog) | `pino` |
+| `tenacity` | `p-retry` / `axios-retry` |
+| `ruff` | ESLint + Prettier |
+| `mypy` | `tsc --noEmit` |
+| `pytest` + `conftest.py` fixtures | Vitest/Jest + setup files |
+| `uvicorn` | `nodemon` / `ts-node-dev` |
+| `__init__.py` | `index.ts` barrel export |
+| `StrEnum` | TS union type + const object |
+| `lifespan` | app bootstrap in `main.ts` |
+| `uv run <cmd>` | `pnpm <script>` |
+
+Note the differences that bite: Python imports are module paths, not file paths; `async` is
+per-function rather than viral; and there is no `package.json` script runner, so `uv run` is the
+prefix for everything.
+
+### 3.5 Structure rules
+
+- `utils/` holds pure functions only: no I/O, no DB, no `services/` or `integrations/` imports.
+- `shared/` holds enums, constants, protocols, and value types; it may import only `shared/` and
+  `core/`. It is not a place for "misc".
+- One model, one repository, one schema module per aggregate. Do not create `models/common.py`.
+- Every package has an `__init__.py`. Export only what other layers are allowed to import.
+- Empty directories for future phases are not created. A directory earns its place when its first
+  real file lands.
 
 ---
 
@@ -156,17 +242,42 @@ with context. API handlers map errors to problem responses; services never raise
 
 ### 4.5 Configuration
 
-- All settings in `app/core/config.py` as one `Settings(BaseSettings)` with types and defaults.
+- Two layers, never merged:
+  - `app/core/env.py` — `Env(BaseSettings)`. The **only** reader of `.env` and `os.environ`.
+    Holds raw values, with `SecretStr` for passwords.
+  - `app/core/config.py` — frozen dataclasses (`settings`, `database`) derived from `env`, plus
+    DSN composition. Everything else imports from here.
+- No module outside `app/core/config.py` may import `app/core/env.py`.
 - Every new key is added to `.env.example` with a comment and a safe default.
 - Fail fast at startup on invalid config (`ConfigError`), including: default secret in non-dev,
-  `DAILY_SEND_LIMIT > 50`, missing `DATABASE_URL`, unreadable OAuth files.
-- Never read `os.environ` outside `config.py`.
+  `DAILY_SEND_LIMIT > 50`, missing `PG_PASSWORD`, unreadable OAuth files.
+
+### 4.6 Formatting and lint
+
+- Configuration lives in `ruff.toml` — the Python equivalent of `.prettierrc`. Do not duplicate
+  ruff settings in `pyproject.toml`; the standalone file wins and the duplicate silently rots.
+- Line length 100, double quotes, 4-space indent, LF endings; `app` is the only first-party
+  package for import sorting.
+- `.gitattributes` forces `eol=lf` for text files; do not rely on `core.autocrlf` and never commit
+  CRLF into source.
+- `uv run ruff format .` formats; `uv run ruff check --fix .` lints and fixes imports.
+- `.editorconfig` covers editors that do not run ruff.
+- `.vscode/settings.json` pins `charliermarsh.ruff` as the Python formatter (format + fix imports on
+  save). Keep it committed so the editor matches `ruff.toml`.
+- `uv run pre-commit install` once per clone. Hooks run ruff and mypy on every commit.
+- **No commit without formatting and linting.** Run `uv run ruff format .` and
+  `uv run ruff check --fix .` before staging. The hook re-runs both and blocks the commit if it has
+  to change a file — re-stage and commit again.
+- Never commit with `--no-verify`. Fix the finding or change the rule in `ruff.toml` deliberately.
 
 ---
 
 ## 5. Data standards
 
 - SQLAlchemy 2.0 declarative: `class Contact(Base)` with `Mapped[...]` and `mapped_column`.
+- Two drivers, two URLs from one credential set: `database.async_url` (`asyncpg`) for the app,
+  `database.sync_url` (`psycopg`) for Alembic. psycopg's async mode does not run on Windows'
+  default ProactorEventLoop, so never create the app engine with psycopg.
 - Shared base in `db/models/base.py` provides `id` (UUID, `server_default=gen_random_uuid()`),
   `created_at`, `updated_at` (`server_default=func.now()`, `onupdate=func.now()`).
 - Define an Alembic `naming_convention` for indexes, unique constraints, FKs, and checks **before the
@@ -247,8 +358,10 @@ with context. API handlers map errors to problem responses; services never raise
 ### 7.4 Commands
 
 ```bash
+uv run dev
 uv run ruff check --fix .
 uv run ruff format .
+uv run ruff format --check .
 uv run mypy app
 uv run pytest -q
 uv run pytest -q --cov=app.services --cov=app.repositories

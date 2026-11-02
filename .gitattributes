@@ -1,0 +1,19 @@
+# Keep LF in the repository and in the working tree, on every OS.
+* text=auto eol=lf
+
+# Binary files Git must never convert.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.zip binary
+*.enc binary
+
+# Windows-only scripts keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

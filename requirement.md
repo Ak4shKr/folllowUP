@@ -74,7 +74,7 @@ Requirement IDs are stable. Tests and commits should reference them.
 | ID | Requirement |
 | --- | --- |
 | FR-C-01 | Import contacts from a configured Google Sheet range (id and range from config). |
-| FR-C-02 | Field mapping is header-driven and configurable; required field is `email`. Optional: `name`, `company_name`, `designation`, `company_website`, `target_role`, `source`. |
+| FR-C-02 | Field mapping is header-driven and configurable; required field is `email`. Optional: `name`, `company_name`, `designation`, `company_website`, `target_role`, `source`, `mobile`. `mobile` is preserved as source-owned text only; this project remains email-only. |
 | FR-C-03 | Normalize email as: trim surrounding whitespace, lowercase the entire address. Do **not** strip `+tag` or dots — merging distinct people is worse than a duplicate. |
 | FR-C-04 | Validate rows: email present, syntactically valid, length ≤ 254, no control characters. Invalid rows are reported, never silently dropped. |
 | FR-C-05 | Deduplicate within the import batch and against existing rows by normalized email. First occurrence wins within a batch. |
@@ -291,6 +291,7 @@ on every table, named constraints via an Alembic naming convention, enums as `te
 | company_website | text null | |
 | target_role | text null | |
 | source | text null | |
+| mobile | text null | source-owned text; no country-code or SMS assumptions |
 | status | text | `active`,`replied`,`opted_out`,`archived`,`suppressed` |
 | created_at / updated_at | timestamptz | |
 

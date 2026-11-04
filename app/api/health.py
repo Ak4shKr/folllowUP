@@ -4,6 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
+from app.db.schema import CURRENT_REVISION
 from app.db.session import engine
 
 router = APIRouter(tags=["health"])
@@ -19,6 +20,7 @@ class HealthResponse(BaseModel):
 class ReadinessResponse(BaseModel):
     status: str
     database: str
+    migration: str
 
 
 @router.get("/health", response_model=HealthResponse, summary="Liveness probe")
@@ -36,6 +38,9 @@ async def ready() -> ReadinessResponse:
     try:
         async with engine.connect() as conn:
             await conn.execute(text("select 1"))
+            revision = await conn.scalar(text("select version_num from alembic_version"))
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="database unavailable") from exc
-    return ReadinessResponse(status="ready", database="ok")
+    if revision != CURRENT_REVISION:
+        raise HTTPException(status_code=503, detail="database migration required")
+    return ReadinessResponse(status="ready", database="ok", migration="head")

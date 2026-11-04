@@ -25,9 +25,9 @@ email is worse than a boring one that sends exactly what was approved. Optimize 
 ## 2. Non-negotiable rules
 
 1. **Python 3.12+, managed by `uv`.** Commit `uv.lock` with every dependency change.
-2. **Respect the module boundaries in §3.** No exceptions, no "temporary" cross-imports.
-3. **Business rules live in `services/`.** API routes, repositories, integrations, and the AI layer
-   must not decide policy.
+2. **Respect the module boundaries in §3.** No temporary cross-imports.
+3. **Business rules live in `services/`.** API routes, repositories, external-service code, and AI
+   code must not decide policy.
 4. **PostgreSQL is the source of truth.** Google Sheets is a read-only import source. Never let the
    scheduler read from Sheets.
 5. **SQLAlchemy 2.0 style + Alembic.** Never create or alter tables from startup code, `create_all()`,
@@ -46,8 +46,8 @@ email is worse than a boring one that sends exactly what was approved. Optimize 
 13. **Never blindly retry an ambiguous send.** Record `unknown_outcome` and reconcile first.
 14. **Imports are idempotent and non-destructive.** Re-imports must not touch `status` or history.
 15. **Bounded retries with backoff.** Provider errors only. Validation and auth errors are terminal.
-16. **Provider logic stays behind adapters.** Swapping Ollama for OpenAI, or Gmail for another
-    provider, must not touch campaign or send logic.
+16. **External-service code stays behind integrations.** Changing a provider must not require
+    changing campaign or send rules.
 17. **No new infrastructure without approval:** no LangGraph, Celery, Redis, RAG/vector DB,
     microservices, frontend, or cloud queue. Add a decision entry to `requirement.md` §12 first.
 18. **Failing tests block completion.** Never hand back code with a red suite or a type error.
@@ -76,7 +76,7 @@ Allowed imports (the only edges permitted):
 
 | From | May import |
 | --- | --- |
-| `api/` | `schemas/`, `services/`, `core/` |
+| `api/` | `schemas/`, `services/`, `core/` (and `db/session.py` only for health/readiness probes) |
 | `services/` | `repositories/`, `schemas/`, `db/models/` (types only), `integrations/`, `ai/`, `core/` |
 | `repositories/` | `db/models/`, `db/session.py`, `core/` |
 | `db/models/` | `core/` constants only |
@@ -88,7 +88,7 @@ Allowed imports (the only edges permitted):
 Forbidden, always:
 - `repositories/` importing `services/` or `integrations/`
 - `ai/` importing `repositories/` or `db/`
-- `api/` querying the ORM session directly
+- `api/` querying the ORM session directly outside the health/readiness probes
 - `integrations/` raising `HTTPException` or knowing about campaigns
 - circular imports between any two modules
 
@@ -122,55 +122,113 @@ app/
 │   ├── __init__.py
 │   ├── env.py               # Env(BaseSettings) — only reader of .env / os.environ
 │   └── config.py            # derived config: settings, api, database
-└── db/
-    ├── __init__.py
-    └── session.py           # async engine + session factory
+├── db/
+│   ├── __init__.py
+│   ├── schema.py            # current Alembic revision used by readiness
+│   ├── session.py           # async engine + session factory
+│   └── models/
+│       ├── __init__.py     # exports models and metadata
+│       ├── base.py         # base, UUIDs, timestamps, naming convention
+│       ├── contact.py
+│       ├── job_profile.py
+│       ├── campaign.py
+│       ├── campaign_contact.py
+│       ├── email_message.py
+│       ├── followup_task.py
+│       └── import_run.py
+├── schemas/                 # Pydantic API/import contracts
+├── repositories/            # database queries and writes
+└── services/                # business rules and import orchestration
 ```
 
-Next, each landing with its first real file: `db/models/` plus `alembic.ini` and `migrations/`,
-then `schemas/`, `repositories/`, `services/`, and `api/v1/routes/` as features arrive.
+Migration files live at `alembic.ini` and `migrations/`. The current schema is defined in
+`app/db/models/`, and the first migration is
+`migrations/versions/21fb319c6d60_create_initial_schema.py`. API and import data shapes live in
+`app/schemas/`; database queries live in `app/repositories/`; import rules live in
+`app/services/contact_import.py`; tests live in `tests/unit/`.
+
+A folder earns its place when its first real file lands; future API routes and integrations are
+added only when implemented.
+
+### Current database relationships
+
+```mermaid
+erDiagram
+    JOB_PROFILES ||--o{ CAMPAIGNS : configures
+    CAMPAIGNS ||--o{ CAMPAIGN_CONTACTS : enrolls
+    CONTACTS ||--o{ CAMPAIGN_CONTACTS : joins
+    CONTACTS ||--o{ EMAIL_MESSAGES : receives
+    CAMPAIGNS ||--o{ EMAIL_MESSAGES : owns
+    CAMPAIGN_CONTACTS ||--o{ EMAIL_MESSAGES : produces
+    EMAIL_MESSAGES ||--o{ EMAIL_MESSAGES : follows
+    CONTACTS ||--o{ FOLLOWUP_TASKS : has
+    CAMPAIGNS ||--o{ FOLLOWUP_TASKS : schedules
+    CAMPAIGN_CONTACTS ||--o{ FOLLOWUP_TASKS : tracks
+    EMAIL_MESSAGES ||--o{ FOLLOWUP_TASKS : precedes
+
+    CONTACTS {
+        uuid id PK
+        text email UK
+        text mobile
+        text status
+    }
+    JOB_PROFILES {
+        uuid id PK
+        text name
+        jsonb target_roles
+        jsonb skills
+        boolean is_active
+    }
+    CAMPAIGNS {
+        uuid id PK
+        uuid job_profile_id FK
+        text status
+        integer daily_limit
+        text timezone
+    }
+    CAMPAIGN_CONTACTS {
+        uuid id PK
+        uuid campaign_id FK
+        uuid contact_id FK
+        text status
+        integer sequence_base
+    }
+    EMAIL_MESSAGES {
+        uuid id PK
+        uuid campaign_contact_id FK
+        uuid parent_email_id FK
+        text email_type
+        integer sequence_number
+        text status
+    }
+    FOLLOWUP_TASKS {
+        uuid id PK
+        uuid previous_email_id FK
+        integer sequence_number
+        timestamptz due_at
+        text status
+    }
+    IMPORT_RUNS {
+        uuid id PK
+        text sheet_id
+        text range
+        integer inserted
+        integer invalid
+    }
+```
+
+`mobile` is optional source-owned text only; this project remains email-only. Forced re-enrollment
+reuses an enrollment row and increments `sequence_base`. History-bearing deletes are restricted.
+Follow-up prerequisites remain pending with a recorded `skip_reason`.
 
 This tree is the single source of truth for structure; there is no separate folder-structure doc.
 Root files: `pyproject.toml` (uv project + `dev`/`start` entry points), `uv.lock`, `ruff.toml`,
-`.pre-commit-config.yaml`, `.editorconfig`, `.gitattributes`, `.env.example`.
+`.pre-commit-config.yaml`, `.editorconfig`, `.gitattributes`, `.env.example`, `alembic.ini`.
 
 **There is no `controllers/` and no `apis/` directory.** In FastAPI the route handler is the
 controller; duplicating the layer produces two places to change and no benefit.
 
-### 3.4 Coming from Node/TypeScript
-
-| flwUp | Node/TypeScript equivalent |
-| --- | --- |
-| `uv` + `uv.lock` | `pnpm` + `pnpm-lock.yaml` |
-| `pyproject.toml` | `package.json` + `tsconfig.json` + tool config |
-| FastAPI | Express / NestJS |
-| `api/v1/routes/*.py` | NestJS controller files / Express router modules |
-| `api/dependencies.py` + `Depends()` | middleware + request-scoped DI providers |
-| `schemas/` (Pydantic) | Zod schemas / class-validator DTOs |
-| `core/config.py` (pydantic-settings) | `dotenv` + `envalid`/`zod` env parsing |
-| `db/models/` (SQLAlchemy 2.0) | `prisma/schema.prisma` models |
-| `migrations/` (Alembic) | Prisma Migrate / Knex migrations |
-| `repositories/` | repository layer over Prisma Client |
-| `services/` | NestJS providers |
-| `integrations/` | typed `axios` clients behind an interface |
-| `ai/` | a `lib/openai` module |
-| `scheduler/` | `node-cron`, except the work queue lives in Postgres, not memory |
-| `core/logging.py` (structlog) | `pino` |
-| `tenacity` | `p-retry` / `axios-retry` |
-| `ruff` | ESLint + Prettier |
-| `mypy` | `tsc --noEmit` |
-| `pytest` + `conftest.py` fixtures | Vitest/Jest + setup files |
-| `uvicorn` | `nodemon` / `ts-node-dev` |
-| `__init__.py` | `index.ts` barrel export |
-| `StrEnum` | TS union type + const object |
-| `lifespan` | app bootstrap in `main.ts` |
-| `uv run <cmd>` | `pnpm <script>` |
-
-Note the differences that bite: Python imports are module paths, not file paths; `async` is
-per-function rather than viral; and there is no `package.json` script runner, so `uv run` is the
-prefix for everything.
-
-### 3.5 Structure rules
+### 3.4 Structure rules
 
 - `utils/` holds pure functions only: no I/O, no DB, no `services/` or `integrations/` imports.
 - `shared/` holds enums, constants, protocols, and value types; it may import only `shared/` and
@@ -189,6 +247,8 @@ prefix for everything.
 - Full type annotations on every function and module-level constant. No `Any` in public signatures.
 - `from __future__ import annotations` is unnecessary on 3.12; do not add it.
 - Prefer small functions with explicit inputs. No hidden globals other than settings.
+- Add short, plain-language comments when code has a non-obvious reason, safety rule, boundary,
+  or important side effect. Do not comment every line or repeat what the code already says.
 - Use `pathlib.Path`, never string path joins. Code must run on Windows and Linux.
 - Use `zoneinfo.ZoneInfo`, never naive datetimes. Store UTC; convert for display and windows.
 - Use `enum.StrEnum` for status values used in Python; persist as `text` with a DB `CHECK`.
@@ -268,10 +328,13 @@ with context. API handlers map errors to problem responses; services never raise
   default ProactorEventLoop, so never create the app engine with psycopg.
 - Shared base in `db/models/base.py` provides `id` (UUID, `server_default=gen_random_uuid()`),
   `created_at`, `updated_at` (`server_default=func.now()`, `onupdate=func.now()`).
+- SQLAlchemy table and column comments are the source of truth for database descriptions. Apply
+  comment changes through a new Alembic migration; never edit an applied migration.
 - Define an Alembic `naming_convention` for indexes, unique constraints, FKs, and checks **before the
   first migration**; renaming constraints later is migration churn.
-- Every FK has an explicit `ondelete`: `CASCADE` for enrollments/messages owned by a campaign,
-  `RESTRICT` for contacts referenced by history, `SET NULL` only for optional provenance.
+- Every FK has an explicit `ondelete`: use `RESTRICT` for history-bearing contacts, campaigns,
+  enrollments, and messages; use `SET NULL` only for optional provenance. Change this only with a
+  documented deletion decision.
 - Add an index for every column used in a scheduler `WHERE` clause or a list endpoint filter.
 - Enum-like columns: `text` + `CHECK (... IN (...))`, not native PG enums (easier evolution).
 - Money/counts: integers. No floats for limits.
@@ -383,8 +446,10 @@ Report exactly which commands ran and their results when finishing a task.
 5. New config ⇒ `.env.example` in the same change.
 6. New behavior ⇒ test in the same change.
 7. Run lint, types, and tests. Fix what you broke.
-8. Summarize: files changed, behavior added, requirement IDs covered, commands run and their output,
-   known limitations, and any decision that needs a human.
+8. Summarize the work in plain language: what the agent did, which files changed, what behavior
+   changed, why the change was needed, requirement IDs covered, commands run and their output,
+   known limitations, and any decision that needs a human. This report is required after every
+   completed code change so a developer can understand the project without reading the full diff.
 
 ### Definition of done
 

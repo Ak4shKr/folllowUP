@@ -46,6 +46,22 @@ docker run --name flwup-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=flwup `
 
 The named volume keeps the data when the container is removed.
 
+Run database migrations from the project root:
+
+```powershell
+uv run alembic upgrade head
+uv run alembic current
+uv run alembic downgrade base
+uv run alembic upgrade head
+```
+
+After changing a model, create a migration and review it before applying it:
+
+```powershell
+uv run alembic revision --autogenerate -m "describe the schema change"
+uv run alembic upgrade head
+```
+
 ## Tech stack
 
 | Part | Choice |

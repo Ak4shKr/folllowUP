@@ -105,46 +105,34 @@ Forbidden, always:
 | `ai/` | Prompt versions, model construction, generation, output validation | Sending, DB access |
 | `scheduler/` | Job registration, advisory lock, tick intervals | Business rules |
 
-### 3.3 Layout (as created in Phase 0)
+### 3.3 Layout (current state)
+
+Only what exists today. The rest of §3.1–3.2 is the target; a folder is created with its first
+real file, never in advance.
 
 ```text
 app/
-├── main.py                  # app factory + lifespan (DB engine, scheduler, routers)
-├── dev.py                   # `uv run dev` / `uv run start` (host + port come from env)
+├── __init__.py
+├── main.py                  # create_app(): health router + lifespan
+├── dev.py                   # `uv run dev` / `uv run start` (host + port from env)
 ├── api/
-│   ├── openapi.py           # swagger metadata: title, tags, X-API-Key scheme
-│   ├── health.py            # GET /health — unversioned, unauthenticated
-│   ├── dependencies.py      # session, auth, pagination dependencies
-│   └── v1/
-│       ├── router.py        # aggregates route modules under /api/v1
-│       └── routes/          # contacts.py, campaigns.py, emails.py, ...
+│   ├── __init__.py
+│   └── health.py            # GET /health, GET /ready
 ├── core/
+│   ├── __init__.py
 │   ├── env.py               # Env(BaseSettings) — only reader of .env / os.environ
-│   ├── config.py            # derived frozen config: settings, database
-│   ├── logging.py           # structlog config + redaction processor
-│   ├── errors.py            # AppError hierarchy + HTTP mapping
-│   ├── security.py          # API-key dependency, Fernet helpers
-│   └── time.py              # UTC/window helpers
-├── shared/                  # enums.py, constants.py, types.py, protocols.py
-├── utils/                   # pure helpers: email.py, text.py, pagination.py
-├── schemas/                 # Pydantic request/response/AI contracts
-├── db/
-│   ├── session.py           # async engine + sessionmaker
-│   └── models/              # base.py, contact.py, campaign.py, ...
-├── repositories/            # all SQL and persistence
-├── services/                # all business rules
-├── integrations/            # gmail.py, google_sheets.py, google_auth.py
-├── ai/                      # model_factory.py, generator.py, prompts/
-├── scheduler/               # scheduler.py, jobs/
-└── cli/                     # operator commands (review, pause, stats)
-tests/{unit,integration,e2e}/
-scripts/                     # thin wrappers over services
-migrations/                  # Alembic
+│   └── config.py            # derived config: settings, api, database
+└── db/
+    ├── __init__.py
+    └── session.py           # async engine + session factory
 ```
+
+Next, each landing with its first real file: `db/models/` plus `alembic.ini` and `migrations/`,
+then `schemas/`, `repositories/`, `services/`, and `api/v1/routes/` as features arrive.
 
 This tree is the single source of truth for structure; there is no separate folder-structure doc.
 Root files: `pyproject.toml` (uv project + `dev`/`start` entry points), `uv.lock`, `ruff.toml`,
-`.pre-commit-config.yaml`, `.editorconfig`, `.env.example`, `alembic.ini`, `migrations/`.
+`.pre-commit-config.yaml`, `.editorconfig`, `.gitattributes`, `.env.example`.
 
 **There is no `controllers/` and no `apis/` directory.** In FastAPI the route handler is the
 controller; duplicating the layer produces two places to change and no benefit.

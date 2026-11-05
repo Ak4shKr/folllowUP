@@ -8,6 +8,8 @@ dependencies = [
     "cryptography>=50.0.2",
     "email-validator>=2.3.0",
     "fastapi>=0.162.0",
+    "google-api-python-client>=2.201.0",
+    "google-auth>=2.62.1",
     "psycopg[binary]>=3.3.6",
     "pydantic-settings>=2.16.2",
     "sqlalchemy[asyncio]>=2.1.6",
@@ -19,6 +21,7 @@ dependencies = [
 [project.scripts]
 dev = "app.dev:main"
 start = "app.dev:start"
+flwup = "app.cli:main"
 
 [build-system]
 requires = ["hatchling"]

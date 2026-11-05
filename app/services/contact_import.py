@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
@@ -10,6 +11,7 @@ from app.repositories.contact import (
     source_fields_changed,
     update_source_fields,
 )
+from app.repositories.import_run import add_import_run
 from app.schemas.contact_import import ContactImportRow
 
 
@@ -26,12 +28,21 @@ class ImportSummary:
 async def import_contacts(
     session: AsyncSession,
     rows: list[dict[str, object]],
+    *,
+    source: str = "google_sheets",
+    sheet_id: str = "",
+    source_range: str = "",
+    row_numbers: list[int] | None = None,
     dry_run: bool = False,
 ) -> ImportSummary:
     summary = ImportSummary()
     seen: set[str] = set()
+    started_at = datetime.now(UTC)
+    source_row_numbers = row_numbers or list(range(2, len(rows) + 2))
+    if len(source_row_numbers) != len(rows):
+        raise ValueError("row_numbers must match rows length")
 
-    for row_number, raw_row in enumerate(rows, start=2):
+    for row_number, raw_row in zip(source_row_numbers, rows, strict=True):
         try:
             row = ContactImportRow.model_validate(raw_row)
         except ValidationError as exc:
@@ -60,5 +71,21 @@ async def import_contacts(
             summary.unchanged += 1
 
     if not dry_run:
+        finished_at = datetime.now(UTC)
+        await add_import_run(
+            session,
+            source=source,
+            sheet_id=sheet_id,
+            source_range=source_range,
+            started_at=started_at,
+            finished_at=finished_at,
+            inserted=summary.inserted,
+            updated=summary.updated,
+            unchanged=summary.unchanged,
+            skipped_duplicate=summary.skipped_duplicate,
+            invalid=len(summary.invalid),
+            failed=summary.failed,
+            details={"invalid_rows": summary.invalid},
+        )
         await session.commit()
     return summary

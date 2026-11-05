@@ -32,5 +32,13 @@ class Env(BaseSettings):
 
     require_email_approval: bool = True
 
+    google_sheet_id: str = ""
+    google_sheet_range: str = "Contacts!A:H"
+    google_credentials_file: str = ""
+    google_field_mapping: str = (
+        "email=email,name=name,company_name=company_name,designation=designation,"
+        "company_website=company_website,target_role=target_role,source=source,mobile=mobile"
+    )
+
 
 env = Env()  # type: ignore[call-arg]  # values come from .env / environment

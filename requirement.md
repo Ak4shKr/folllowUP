@@ -406,7 +406,9 @@ All routes are prefixed `/api/v1`, require `X-API-Key`, and return RFC 7807-styl
 | GET | `/stats/campaigns/{id}` | Counts and rates |
 
 **CLI** (`python -m app.cli`): `import --dry-run`, `review`, `approve <id>`, `reject <id>`,
-`pause`, `resume`, `stats --campaign`, `reconcile <id>`.
+`pause`, `resume`, `stats --campaign`, `reconcile <id>`. Phase 0 `import` reads the configured
+Google Sheet range, maps configured headers, and passes rows to the contact import service; it does
+not write contacts directly and has no scheduler integration.
 The CLI exists because "no frontend" must not mean "curl is the UX".
 
 **Scripts:** `scripts/import_contacts.py`, `scripts/gmail_auth.py` (one-time loopback OAuth),
